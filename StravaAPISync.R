@@ -4,7 +4,7 @@
 # Glenn Newnham
 # 12.06.2022
 #
-# Requesting and processing strava data based on the folliwng web site:
+# Requesting and processing strava data based on the following web site:
 # https://rviews.rstudio.com/2021/11/22/strava-data/
 #
 #
@@ -13,74 +13,12 @@
 #
 #########################################################
 
-# Prerequisites: Rtools external installation, Create an OAuth Strava app, install the following packages:
-# install.packages("usethis")
-
-library(usethis)
-library(tarchetypes)
-library(conflicted)
-library(tidyverse)
-library(lubridate)
-library(jsonlite)
-library(targets)
-library(httpuv)
-library(httr)
-library(pins)
-library(httr)
-library(fs)
-library(readr)
-
-conflict_prefer("filter", "dplyr")
-
-# ### type "usethis::edit_r_environ()" and add thee following to 'C:/Users/new298/Documents/.Renviron'
-# STRAVA_KEY = 87643
-# STRAVA_SECRET = "fbf47f3fbb53b43af16e9c3abfe1d64f3519d691"
-
-App_Name = "RSync"
-
-define_strava_app <- function() {
-	oauth_app(
-		appname = App_Name,
-		key = Sys.getenv("STRAVA_KEY"),
-		secret = Sys.getenv("STRAVA_SECRET")
-	)
-}
-
-my_app = define_strava_app()
-my_app
-
-
-define_strava_endpoint <- function() {
-	oauth_endpoint(request = NULL,
-				   authorize = "https://www.strava.com/oauth/authorize",
-				   access = "https://www.strava.com/oauth/token")
-}
-
-my_endpoint = define_strava_endpoint()
-my_endpoint
-
-
-define_strava_sig <- function(endpoint, app) {
-	oauth2.0_token(
-		endpoint,
-		app,
-		scope = "activity:read_all,activity:read,profile:read_all",
-		type = NULL,
-		use_oob = FALSE,
-		as_header = FALSE,
-		use_basic_auth = FALSE,
-		cache = FALSE
-	)
-}
-
-my_sig = define_strava_sig(my_endpoint, my_app)
-my_sig$credentials
-
-
-#############################################
-### Now get the data
-#############################################
-
+#########################################################
+# Access Activities
+# get all the activity summaries: requires my_sig
+# You are now authenticated and can directly access your Strava data.
+#########################################################
+# 1. Load all activities
 
 read_all_activities <- function(sig) {
 	activities_url <- parse_url("https://www.strava.com/api/v3/athlete/activities")
@@ -112,6 +50,132 @@ read_all_activities <- function(sig) {
 
 
 df_act_raw = read_all_activities(my_sig)
+summary(df_act_raw)
+names(df_act_raw)
+
+###################################
+# 2. Preprocess activities
+
+summary(df_act_raw$athlete.id)
+pre_process_act <- function(df_act_raw, athlete_id) {
+	df_act <- df_act_raw %>%
+		mutate(across(contains("id"), as.character),
+			   `athlete.id` = athlete_id)
+}
+df_act = pre_process_act(df_act_raw, 1738888)
+summary(df_act_raw$athlete.id)
 
 
+###################################
+# 3. Extract activity IDs
+
+library(dplyr)
+
+act_ids = pull(distinct(df_act, id))
+act_ids
+
+
+
+###################################
+# Read Measurements
+# requires that you have all the metadata in df_act
+###################################
+# 1. Read the ‘stream’ data from Strava
+
+read_activity_stream <- function(id, sig) {
+	act_url <-
+		parse_url(stringr::str_glue("https://www.strava.com/api/v3/activities/{id}/streams"))
+	access_token <- sig$credentials$access_token[[1]]
+
+	r <- modify_url(act_url,
+					query = list(
+						access_token = access_token,
+						keys = str_glue(
+							"distance,time,latlng,altitude,velocity_smooth,cadence,watts,
+                      temp,moving,grade_smooth"
+						)
+					)) %>%
+		GET()
+
+	stop_for_status(r)
+
+	fromJSON(content(r, as = "text"), flatten = TRUE) %>%
+		as_tibble() %>%
+		mutate(id = id)
+}
+
+
+df_meas = read_activity_stream(act_ids[1], my_sig)
+df_meas
+
+#######################################
+# 2. Bind the single targets into one data frame
+
+df_meas_all = bind_rows(df_meas)
+
+df_meas_all
+
+#######################################
+# 3. Turn the data into a wide format
+
+meas_wide <- function(df_meas) {
+	pivot_wider(df_meas, names_from = type, values_from = data)
+}
+df_meas_wide = meas_wide(df_meas_all)
+
+#######################################
+# 4. Preprocess and unnest the data
+
+meas_pro <- function(df_meas_wide) {
+	df_meas_wide %>%
+		mutate(
+			lat = map_if(
+				.x = latlng,
+				.p = ~ !is.null(.x),
+				.f = ~ .x[, 1]
+			),
+			lng = map_if(
+				.x = latlng,
+				.p = ~ !is.null(.x),
+				.f = ~ .x[, 2]
+			)
+		) %>%
+		select(-c(latlng, original_size, resolution, series_type)) %>%
+		unnest(where(is_list))
+}
+
+df_meas_pro = meas_pro(df_meas_wide)
+
+
+
+###################################
+# Create Visualisations
+# requires an activity dataframe called df_meas_pro
+###################################
+
+vis_meas = function(df_meas_pro) {
+	df_meas_pro %>%
+		filter(!is.na(lat)) %>%
+		ggplot(aes(x = lng, y = lat)) +
+		geom_path() +
+		facet_wrap( ~ id, scales = "free") +
+		theme(
+			axis.line = element_blank(),
+			axis.text.x = element_blank(),
+			axis.text.y = element_blank(),
+			axis.ticks = element_blank(),
+			axis.title.x = element_blank(),
+			axis.title.y = element_blank(),
+			legend.position = "bottom",
+			panel.background = element_blank(),
+			panel.border = element_blank(),
+			panel.grid.major = element_blank(),
+			panel.grid.minor = element_blank(),
+			plot.background = element_blank(),
+			strip.text = element_blank()
+		)
+}
+
+gg_meas = vis_meas(df_meas_pro)
+gg_meas
 
