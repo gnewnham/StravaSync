@@ -1,4 +1,11 @@
 
+# deployed on shiny.io as sensingsystems.shiny.io
+# install.packages('rsconnect')
+# library(rsconnect)
+# rsconnect::setAccountInfo(name='sensingsystems',
+# 						  token='12CFA953868D48CBDE2482D6323862B2',
+# 						  secret='x2PpXiMWAZpY/xRqg86pYSsvRVdlD79cNsdPoQSh')
+# rsconnect::deployApp('path/to/your/app')
 
 library(shiny)
 library(leaflet)
@@ -28,7 +35,7 @@ server <- function(input, output, session){
 		})
 		output$downloadData = downloadHandler(
 			filename = function() {
-				paste0(gsub(pattern = "\\.fit$", "", input$datapath), '.csv')
+				gsub("fit", "csv", input$datapath)
 			},
 			content = function(file) {
 				write.csv(fitData, file)
