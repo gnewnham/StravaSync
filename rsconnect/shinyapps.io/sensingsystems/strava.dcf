@@ -5,7 +5,7 @@ account: sensingsystems
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 6491787
-bundleId: 6008804
+bundleId: 6010212
 url: https://sensingsystems.shinyapps.io/strava/
-when: 1655265551.80251
-lastSyncTime: 1655265551.80254
+when: 1655300297.41944
+lastSyncTime: 1655300297.41946
